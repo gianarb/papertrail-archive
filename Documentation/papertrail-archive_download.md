@@ -36,9 +36,12 @@ papertrail-archive download [flags]
 ### Options
 
 ```
-      --from time   
-  -h, --help        help for download
-      --to time     
+      --basedir string   directory where to store the archives. (default "/tmp")
+      --from time        
+  -h, --help             help for download
+  -y, --no-interactive   Do not ask any question and download.
+      --parallel int     How many downloads to start in parallel (default 3)
+      --to time          
 ```
 
 ### Options inherited from parent commands

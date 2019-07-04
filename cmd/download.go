@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,8 @@ var urlTemplate = "https://papertrailapp.com/api/v1/archives/%s/download"
 
 var from TimeVar
 var to TimeVar
+var noInteractive bool
+var parallel int
 
 type TimeVar struct {
 	time *time.Time
@@ -48,6 +51,9 @@ func init() {
 	rootCmd.AddCommand(downloadCmd)
 	downloadCmd.PersistentFlags().Var(&from, "from", "")
 	downloadCmd.PersistentFlags().Var(&to, "to", "")
+	downloadCmd.Flags().BoolVarP(&noInteractive, "no-interactive", "y", false, "Do not ask any question and download.")
+	downloadCmd.Flags().StringVarP(&basedir, "basedir", "", "/tmp", "directory where to store the archives.")
+	downloadCmd.Flags().IntVar(&parallel, "parallel", 3, "How many downloads to start in parallel")
 }
 
 var downloadCmd = &cobra.Command{
@@ -89,13 +95,43 @@ downloading 2019-06-29-22`,
 		} else {
 			toTime = to.Time().UTC()
 		}
+		if basedir == "" {
+			basedir = "."
+		}
 		println("from: " + fromTime.Format(time.RFC3339))
 		println("to: " + toTime.Format(time.RFC3339))
+		println("file will be stored to directory (--basedir to change location): " + basedir)
 		client := http.Client{}
+		downloadsProspect := []string{}
 		for {
-			println("downloading " + fmt.Sprintf("%d-%02d-%02d-%02d", fromTime.Year(), fromTime.Month(), fromTime.Day(), fromTime.Hour()))
+			downloadsProspect = append(downloadsProspect, fmt.Sprintf("%d-%02d-%02d-%02d", fromTime.Year(), fromTime.Month(), fromTime.Day(), fromTime.Hour()))
+			fromTime = fromTime.Add(1 * time.Hour)
+			if !fromTime.Before(toTime) {
+				break
+			}
+		}
 
-			out, err := os.Create(fmt.Sprintf("%d-%02d-%02d-%02d.tsv.gz", fromTime.Year(), fromTime.Month(), fromTime.Day(), fromTime.Hour()))
+		println("The archives that will be downloaded are:")
+		for _, v := range downloadsProspect {
+			println("\t" + v)
+		}
+
+		if !noInteractive {
+			println("do you wan't to proceed with the download? (y)")
+			var response string
+			_, err := fmt.Scanln(&response)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if response != "y" {
+				println("You decided to not proceed. The only way to proceed is answering y")
+				os.Exit(1)
+			}
+		}
+
+		for _, v := range downloadsProspect {
+			println("downloading " + v)
+			out, err := os.Create(fmt.Sprintf("%s/%s.tsv.gz", basedir, v))
 			if err != nil {
 				println(err.Error())
 				os.Exit(1)
@@ -103,14 +139,12 @@ downloading 2019-06-29-22`,
 			defer out.Close()
 
 			req := newRequest()
-			u, err := url.Parse(fmt.Sprintf(urlTemplate, fmt.Sprintf("%d-%02d-%02d-%02d", fromTime.Year(), fromTime.Month(), fromTime.Day(), fromTime.Hour())))
+			u, err := url.Parse(fmt.Sprintf(urlTemplate, v))
 			if err != nil {
 				println(err.Error())
 				os.Exit(1)
 			}
 			req.URL = u
-			//b, _ := httputil.DumpRequest(req, true)
-			//fmt.Printf("%s", b)
 			resp, err := client.Do(req)
 			if err != nil {
 				println(err.Error())
@@ -121,11 +155,6 @@ downloading 2019-06-29-22`,
 			if err != nil {
 				println(err.Error())
 				os.Exit(1)
-			}
-
-			fromTime = fromTime.Add(1 * time.Hour)
-			if !fromTime.Before(toTime) {
-				break
 			}
 		}
 	},
