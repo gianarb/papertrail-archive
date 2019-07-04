@@ -2,7 +2,7 @@ This project offers a set of utils to download and manage logs from papertrail
 archives.
 
 ## usage
-Look at the documentation in the generate `man` in this repository.
+Look at the [documentation](./Documentation/papertrail-archive.md).
 
 ## install
 
