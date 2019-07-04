@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -129,34 +130,53 @@ downloading 2019-06-29-22`,
 			}
 		}
 
-		for _, v := range downloadsProspect {
-			println("downloading " + v)
-			out, err := os.Create(fmt.Sprintf("%s/%s.tsv.gz", basedir, v))
-			if err != nil {
-				println(err.Error())
-				os.Exit(1)
-			}
-			defer out.Close()
+		c := make(chan string)
+		var wg sync.WaitGroup
+		wg.Add(parallel)
+		for ii := 0; ii < parallel; ii++ {
+			go func(c chan string) {
+				for {
+					v, more := <-c
+					if more == false {
+						wg.Done()
+						return
+					}
+					println("downloading " + v)
+					out, err := os.Create(fmt.Sprintf("%s/%s.tsv.gz", basedir, v))
+					if err != nil {
+						println(err.Error())
+						os.Exit(1)
+					}
+					defer out.Close()
 
-			req := newRequest()
-			u, err := url.Parse(fmt.Sprintf(urlTemplate, v))
-			if err != nil {
-				println(err.Error())
-				os.Exit(1)
-			}
-			req.URL = u
-			resp, err := client.Do(req)
-			if err != nil {
-				println(err.Error())
-				os.Exit(1)
-			}
-			defer resp.Body.Close()
-			_, err = io.Copy(out, resp.Body)
-			if err != nil {
-				println(err.Error())
-				os.Exit(1)
-			}
+					req := newRequest()
+					u, err := url.Parse(fmt.Sprintf(urlTemplate, v))
+					if err != nil {
+						println(err.Error())
+						os.Exit(1)
+					}
+					req.URL = u
+					resp, err := client.Do(req)
+					if err != nil {
+						println(err.Error())
+						os.Exit(1)
+					}
+					defer resp.Body.Close()
+					_, err = io.Copy(out, resp.Body)
+					if err != nil {
+						println(err.Error())
+						os.Exit(1)
+					}
+					println("downloaded " + v)
+				}
+			}(c)
 		}
+		for _, v := range downloadsProspect {
+			c <- v
+		}
+		close(c)
+		wg.Wait()
+		println("I am done.")
 	},
 }
 
