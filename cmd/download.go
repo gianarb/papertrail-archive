@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gosuri/uiprogress"
 	"github.com/spf13/cobra"
 )
 
@@ -130,6 +131,14 @@ downloading 2019-06-29-22`,
 			}
 		}
 
+		progressBars := map[string]*uiprogress.Bar{}
+		uiprogress.Start()
+		for _, v := range downloadsProspect {
+			progressBars[v] = uiprogress.AddBar(100).AppendCompleted().PrependElapsed().PrependFunc(func(b *uiprogress.Bar) string {
+				return fmt.Sprintf("Archive %s", v)
+			})
+		}
+
 		c := make(chan string)
 		var wg sync.WaitGroup
 		wg.Add(parallel)
@@ -141,33 +150,11 @@ downloading 2019-06-29-22`,
 						wg.Done()
 						return
 					}
-					println("downloading " + v)
-					out, err := os.Create(fmt.Sprintf("%s/%s.tsv.gz", basedir, v))
+					err := downloadArchive(client, v, progressBars[v])
 					if err != nil {
 						println(err.Error())
 						os.Exit(1)
 					}
-					defer out.Close()
-
-					req := newRequest()
-					u, err := url.Parse(fmt.Sprintf(urlTemplate, v))
-					if err != nil {
-						println(err.Error())
-						os.Exit(1)
-					}
-					req.URL = u
-					resp, err := client.Do(req)
-					if err != nil {
-						println(err.Error())
-						os.Exit(1)
-					}
-					defer resp.Body.Close()
-					_, err = io.Copy(out, resp.Body)
-					if err != nil {
-						println(err.Error())
-						os.Exit(1)
-					}
-					println("downloaded " + v)
 				}
 			}(c)
 		}
@@ -178,6 +165,31 @@ downloading 2019-06-29-22`,
 		wg.Wait()
 		println("I am done.")
 	},
+}
+
+func downloadArchive(client http.Client, v string, bar *uiprogress.Bar) error {
+	out, err := os.Create(fmt.Sprintf("%s/%s.tsv.gz", basedir, v))
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	req := newRequest()
+	u, err := url.Parse(fmt.Sprintf(urlTemplate, v))
+	if err != nil {
+		return err
+	}
+	req.URL = u
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func newRequest() *http.Request {
