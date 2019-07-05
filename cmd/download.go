@@ -7,17 +7,24 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
+	"compress/gzip"
+
+	"github.com/gosuri/uiprogress"
 	"github.com/spf13/cobra"
 )
+
+const gzipRatio = 10
 
 var urlTemplate = "https://papertrailapp.com/api/v1/archives/%s/download"
 
 var from TimeVar
 var to TimeVar
 var noInteractive bool
+var noGunzip bool
 var parallel int
 
 type TimeVar struct {
@@ -48,10 +55,23 @@ func (t *TimeVar) Type() string {
 	return "time"
 }
 
+type WriteCounter struct {
+	Total   uint64
+	current uint64
+	Bar     *uiprogress.Bar
+}
+
+func (wc *WriteCounter) Write(p []byte) (int, error) {
+	wc.current += uint64(len(p))
+	wc.Bar.Set(int((wc.current * 100) / wc.Total))
+	return len(p), nil
+}
+
 func init() {
 	rootCmd.AddCommand(downloadCmd)
 	downloadCmd.PersistentFlags().Var(&from, "from", "")
 	downloadCmd.PersistentFlags().Var(&to, "to", "")
+	downloadCmd.Flags().BoolVarP(&noGunzip, "no-gunzip", "", false, "By default the archive gets decompressed. With this flag it stays compressed.")
 	downloadCmd.Flags().BoolVarP(&noInteractive, "no-interactive", "y", false, "Do not ask any question and download.")
 	downloadCmd.Flags().StringVarP(&basedir, "basedir", "", "/tmp", "directory where to store the archives.")
 	downloadCmd.Flags().IntVar(&parallel, "parallel", 3, "How many downloads to start in parallel")
@@ -130,6 +150,14 @@ downloading 2019-06-29-22`,
 			}
 		}
 
+		progressBars := map[string]*uiprogress.Bar{}
+		uiprogress.Start()
+		for _, v := range downloadsProspect {
+			progressBars[v] = uiprogress.AddBar(100).AppendCompleted().PrependElapsed().PrependFunc(func(vv string) (func(b *uiprogress.Bar) string) {
+				return func(b *uiprogress.Bar) string { return fmt.Sprintf("Archive %s", vv) }
+			}(v))
+		}
+
 		c := make(chan string)
 		var wg sync.WaitGroup
 		wg.Add(parallel)
@@ -141,33 +169,11 @@ downloading 2019-06-29-22`,
 						wg.Done()
 						return
 					}
-					println("downloading " + v)
-					out, err := os.Create(fmt.Sprintf("%s/%s.tsv.gz", basedir, v))
+					err := downloadArchive(client, v, progressBars[v])
 					if err != nil {
 						println(err.Error())
 						os.Exit(1)
 					}
-					defer out.Close()
-
-					req := newRequest()
-					u, err := url.Parse(fmt.Sprintf(urlTemplate, v))
-					if err != nil {
-						println(err.Error())
-						os.Exit(1)
-					}
-					req.URL = u
-					resp, err := client.Do(req)
-					if err != nil {
-						println(err.Error())
-						os.Exit(1)
-					}
-					defer resp.Body.Close()
-					_, err = io.Copy(out, resp.Body)
-					if err != nil {
-						println(err.Error())
-						os.Exit(1)
-					}
-					println("downloaded " + v)
 				}
 			}(c)
 		}
@@ -178,6 +184,57 @@ downloading 2019-06-29-22`,
 		wg.Wait()
 		println("I am done.")
 	},
+}
+
+func downloadArchive(client http.Client, v string, bar *uiprogress.Bar) error {
+	tmpFileName := fmt.Sprintf("%s/%s.tsv.gz.tmp", basedir, v)
+	out, err := os.Create(tmpFileName)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	req := newRequest()
+	u, err := url.Parse(fmt.Sprintf(urlTemplate, v))
+	if err != nil {
+		return err
+	}
+	req.URL = u
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	totSize, err := strconv.Atoi(resp.Header.Get("Content-Length"))
+	if err != nil {
+		return err
+	}
+	counter := &WriteCounter{
+		Total: uint64(totSize),
+		Bar:   bar,
+	}
+	reader := resp.Body
+	destFileName := fmt.Sprintf("%s/%s.tsv", basedir, v)
+	if !noGunzip {
+		// 4 is the std compression ration for gz. I do not know a better way
+		// to do it atm
+		counter.Total = counter.Total * gzipRatio
+		reader, err = gzip.NewReader(resp.Body)
+		defer reader.Close()
+	} else {
+		destFileName = destFileName + ".gz"
+	}
+	_, err = io.Copy(out, io.TeeReader(reader, counter))
+	if err != nil {
+		return err
+	}
+	err = os.Rename(tmpFileName, destFileName)
+	if err != nil {
+		return err
+	}
+	// At this point everyting is done, set the bar to complete
+	bar.Set(int(counter.Total))
+	return nil
 }
 
 func newRequest() *http.Request {
