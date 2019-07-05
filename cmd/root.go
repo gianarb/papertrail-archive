@@ -9,6 +9,12 @@ import (
 
 var token string
 
+var (
+	Version = "dev"
+	Commit  = "none"
+	Date    = "unknown"
+)
+
 func init() {
 	rootCmd.PersistentFlags().StringVar(&token, "token", "", "the papertrail authentication token.")
 }
