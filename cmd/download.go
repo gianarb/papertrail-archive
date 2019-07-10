@@ -15,6 +15,7 @@ import (
 
 	"github.com/gosuri/uiprogress"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 const gzipRatio = 10
@@ -106,6 +107,9 @@ to: 2019-06-30T01:23:02Z
 downloading 2019-06-29-22`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if token == "" {
+			token = viper.GetString("token")
+		}
+		if token == "" {
 			println("A token is required in order to persist this action. Please pass the --token flag.")
 			os.Exit(1)
 		}
@@ -153,7 +157,7 @@ downloading 2019-06-29-22`,
 		progressBars := map[string]*uiprogress.Bar{}
 		uiprogress.Start()
 		for _, v := range downloadsProspect {
-			progressBars[v] = uiprogress.AddBar(100).AppendCompleted().PrependElapsed().PrependFunc(func(vv string) (func(b *uiprogress.Bar) string) {
+			progressBars[v] = uiprogress.AddBar(100).AppendCompleted().PrependElapsed().PrependFunc(func(vv string) func(b *uiprogress.Bar) string {
 				return func(b *uiprogress.Bar) string { return fmt.Sprintf("Archive %s", vv) }
 			}(v))
 		}
